@@ -66,19 +66,20 @@ function sprite(rows, pal, s) {
   return c;
 }
 // Player ship: the real Mtn Dew bottle (IMG.bottle, cap = nose, pointing right) riding pixel wings in the pilot's colour.
-// This sprite is only the wings, 24 x 15 cells; the root rows tuck under the bottle so no seam shows. See shipArt().
-const WING = ['..tff', '..ffffe', '...fffffe', '...fffffffe'], ROOT = '...ffffffff';
-const SHIP = [...WING, ROOT, '', '', '', '', '', ROOT, ...WING.slice().reverse()].map(r => r.padEnd(24, '.'));
+// This sprite is only the wings, 24 x 15 cells, with a gap where the bottle goes; the bottle's rim bridges the join. See shipArt().
+const WING = ['..tff', '..ffffe', '...fffffe', '...fffffffe'];
+const SHIP = [...WING, ...Array(7).fill(''), ...WING.slice().reverse()].map(r => r.padEnd(24, '.'));
 const SHIP_PAL = { 1: { f: '#88ff00', e: '#d9ff8a', t: '#fff' }, 2: { f: '#ff3355', e: '#ff9aa9', t: '#fff' } };
-const SHIP_LEN = 120;                              // bottle length on screen; the art is 184 x 600, so it is 37px wide
+const SHIP_LEN = 120, MUZZLE = SHIP_LEN / 2 + 2;   // bottle length on screen (the art is 184 x 600, so 37px wide); shots leave just ahead of the cap
 // The whole sprite is the hitbox: [u0, u1, halfWidth] boxes in ship space (u along the nose) = bottle body, neck + cap, wings.
+// Fitted to the art at SHIP_LEN = 120: refit all three if that changes.
 const SHIP_BOXES = [[-60, 14, 18.5], [14, 60, 11], [-50, -5, 37.5]];
 function shipHit(p, x, y, r) {
   const c = Math.cos(p.ang), s = Math.sin(p.ang), dx = x - p.x, dy = y - p.y;
   const u = dx * c + dy * s, v = Math.abs(dy * c - dx * s);
   return SHIP_BOXES.some(([u0, u1, hv]) => u > u0 - r && u < u1 + r && v < hv + r);
 }
-console.assert(shipHit({ x: 0, y: 0, ang: 0 }, 45, 0, 1) && !shipHit({ x: 0, y: 0, ang: 0 }, 45, 20, 1)      // nose hits, beside the neck misses
+console.assert(shipHit({ x: 0, y: 0, ang: 0 }, 58, 0, 1) && !shipHit({ x: 0, y: 0, ang: 0 }, 58, 20, 1)      // the cap hits, beside it misses
   && shipHit({ x: 0, y: 0, ang: -Math.PI / 2 }, 30, 20, 1), 'shipHit self-check');                         // wing still hits when the ship points up
 
 const HULL = { g: '#cdbcf5', m: '#4b2a85', h: '#7f5ad1', d: '#2a1650', r: '#ff4df0', o: '#ff9cf7', y: '#ffffff', p: '#b14dff' };
@@ -271,7 +272,7 @@ function endGame(won) { state = won ? 'clear' : 'over'; stateT = 0; victory = wo
 // ---- player combat ----
 function shot(p, x, y, vx, vy, kind, dmg) { shots.push({ owner: p, x, y, vx, vy, kind, dmg, life: kind === 'missile' ? 3 : 1.6 }); }
 function autoFire(p) {
-  const dx = Math.cos(p.ang), dy = Math.sin(p.ang), mx = p.x + dx * 52, my = p.y + dy * 52;
+  const dx = Math.cos(p.ang), dy = Math.sin(p.ang), mx = p.x + dx * MUZZLE, my = p.y + dy * MUZZLE;
   if (p.act.E > 0) {                                           // E: gatling spread while active
     for (const a of [-0.16, -0.08, 0, 0.08, 0.16]) shot(p, mx, my, Math.cos(p.ang + a) * 1500, Math.sin(p.ang + a) * 1500, 'gun', 1);
     p.fireT = 0.05;
@@ -446,7 +447,8 @@ function update(dt) {
       p.x += (tx - p.x) * Math.min(1, dt * 3); p.y += (ty - p.y) * Math.min(1, dt * 3);
     } else {
       p.x = clamp(p.x + c.x * SHIP_SPEED * dt, 64, W - 64);
-      p.y = clamp(p.y + c.y * SHIP_SPEED * dt, HUD_H + 40, H - 40);
+      const edge = isH() ? 40 : 64;                           // the bottle stands upright in the shaft: keep its cap out from under the HUD
+      p.y = clamp(p.y + c.y * SHIP_SPEED * dt, HUD_H + edge, H - edge);
     }
     let da = secAngle() - p.ang; da = Math.atan2(Math.sin(da), Math.cos(da)); p.ang += da * Math.min(1, dt * 5);
     if (state === 'play') {
@@ -467,7 +469,7 @@ function update(dt) {
   // ---- D: laser beams ----
   for (const p of players) {
     if (!p.alive || p.act.D <= 0 || state !== 'play') continue;
-    const dx = Math.cos(p.ang), dy = Math.sin(p.ang), ox = p.x + dx * 52, oy = p.y + dy * 52;
+    const dx = Math.cos(p.ang), dy = Math.sin(p.ang), ox = p.x + dx * MUZZLE, oy = p.y + dy * MUZZLE;
     const inBeam = (x, y, r) => (x - ox) * dx + (y - oy) * dy > -r && Math.abs((x - ox) * dy - (y - oy) * dx) < r + 26;
     for (const e of enemies) if (!e.dead && inBeam(e.x, e.y, e.r)) { damageEnemy(e, LASER_DPS * dt, p); if (Math.random() < 0.3) spark(e.x, e.y, p.color); }
     if (boss && inBeam(boss.x, boss.y, boss.r)) damageBoss(LASER_DPS * dt, p);
@@ -685,13 +687,23 @@ function flame(x, y, len, k, col) {               // stepped exhaust that tapers
   ctx.fillStyle = col; ctx.fillRect(x - len * 0.5, y - 8 * k, len * 0.5, 16 * k); ctx.fillRect(x - len, y - 3 * k, len * 0.5, 6 * k);
   ctx.fillStyle = '#fff'; ctx.fillRect(x - len * 0.3, y - 4 * k, len * 0.3, 8 * k);
 }
+// The bottle, nose-right, with a hard rim in the pilot's colour (its own outline is black, and so is the cave).
+// Built once, at card size, when the art has loaded. One image, so fades and the hit blink stay even across rim and bottle.
+function fuselage(p) {
+  const im = IMG.bottle; if (p.fuselage || !im.complete || !im.naturalWidth) return p.fuselage;   // complete: a half-downloaded image has a size but paints blank
+  const L = SHIP_LEN * 2, wd = L * im.naturalWidth / im.naturalHeight, o = 6, c = document.createElement('canvas');
+  c.width = L + o * 2; c.height = Math.ceil(wd) + o * 2;
+  const g = c.getContext('2d');
+  g.imageSmoothingQuality = 'high'; g.translate(c.width / 2, c.height / 2); g.rotate(Math.PI / 2); g.shadowColor = p.color;
+  for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { g.shadowOffsetX = ox * o; g.shadowOffsetY = oy * o; g.drawImage(im, -wd / 2, -L / 2, wd, L); }
+  return p.fuselage = c;
+}
 function shipArt(p, k, flash) {                    // nose-right at the origin; k = 1 in play, 2 on the player cards
-  const bottle = () => bottleImg(0, 0, SHIP_LEN * k, Math.PI / 2);
   drawSprite(k > 1 ? p.big : p.spr, 0, 0, flash);
-  ctx.shadowColor = p.color;                       // hard rim in the pilot's colour: the bottle's own outline is black, and so is the cave
-  for (const [ox, oy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) { ctx.shadowOffsetX = ox * 3 * k; ctx.shadowOffsetY = oy * 3 * k; bottle(); }
-  ctx.shadowColor = 'transparent';
-  if (flash > 0) { ctx.globalCompositeOperation = 'lighter'; bottle(); ctx.globalCompositeOperation = 'source-over'; }
+  const h = fuselage(p); if (!h) return;
+  const w = h.width * k / 2, ht = h.height * k / 2, put = () => smoothImg(h, -w / 2, -ht / 2, w, ht);
+  put();
+  if (flash > 0) { ctx.globalCompositeOperation = 'lighter'; put(); ctx.globalCompositeOperation = 'source-over'; }
 }
 function drawShip(p) {
   if (!p.joined || !p.alive) return;
@@ -730,7 +742,7 @@ function drawScene() {
   for (const p of players) {                     // D laser beams
     if (!p.alive || p.act.D <= 0) continue;
     const bw = 44 + ((clock * 30 | 0) % 2) * 8;
-    ctx.save(); ctx.translate(p.x + Math.cos(p.ang) * 52, p.y + Math.sin(p.ang) * 52); ctx.rotate(p.ang);
+    ctx.save(); ctx.translate(p.x + Math.cos(p.ang) * MUZZLE, p.y + Math.sin(p.ang) * MUZZLE); ctx.rotate(p.ang);
     ctx.globalAlpha = 0.35; ctx.fillStyle = p.color; ctx.fillRect(0, -bw, 2400, bw * 2);
     ctx.globalAlpha = 1; ctx.fillRect(0, -bw / 2, 2400, bw);
     ctx.fillStyle = '#fff'; ctx.fillRect(0, -bw / 6, 2400, bw / 3); ctx.fillRect(-10, -bw * 0.6, 28, bw * 1.2);
@@ -913,6 +925,9 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+// Offline play when hosted (see sw.js). Opened straight from disk there is no service worker, and none is needed: every asset is local.
+if (navigator.serviceWorker) navigator.serviceWorker.register('sw.js').catch(e => console.warn('Offline mode is off:', e.message));
 </script>
 </body>
 </html>
